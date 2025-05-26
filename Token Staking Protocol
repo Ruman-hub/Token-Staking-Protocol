@@ -1,0 +1,127 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.19;
+
+interface IERC20 {
+    function transfer(address to, uint256 amount) external returns (bool);
+    function transferFrom(address from, address to, uint256 amount) external returns (bool);
+    function balanceOf(address account) external view returns (uint256);
+}
+
+contract Project {
+    IERC20 public stakingToken;
+    IERC20 public rewardToken;
+    
+    address public owner;
+    uint256 public rewardRate = 100; // 100 tokens per second
+    uint256 public lastUpdateTime;
+    uint256 public rewardPerTokenStored;
+    
+    mapping(address => uint256) public userRewardPerTokenPaid;
+    mapping(address => uint256) public rewards;
+    mapping(address => uint256) public balances;
+    
+    uint256 private _totalSupply;
+    
+    event Staked(address indexed user, uint256 amount);
+    event Withdrawn(address indexed user, uint256 amount);
+    event RewardPaid(address indexed user, uint256 reward);
+    
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Not the owner");
+        _;
+    }
+    
+    modifier updateReward(address account) {
+        rewardPerTokenStored = rewardPerToken();
+        lastUpdateTime = block.timestamp;
+        
+        if (account != address(0)) {
+            rewards[account] = earned(account);
+            userRewardPerTokenPaid[account] = rewardPerTokenStored;
+        }
+        _;
+    }
+    
+    constructor(address _stakingToken, address _rewardToken) {
+        owner = msg.sender;
+        stakingToken = IERC20(_stakingToken);
+        rewardToken = IERC20(_rewardToken);
+    }
+    
+    function rewardPerToken() public view returns (uint256) {
+        if (_totalSupply == 0) {
+            return rewardPerTokenStored;
+        }
+        return
+            rewardPerTokenStored +
+            (((block.timestamp - lastUpdateTime) * rewardRate * 1e18) / _totalSupply);
+    }
+    
+    function earned(address account) public view returns (uint256) {
+        return
+            ((balances[account] *
+                (rewardPerToken() - userRewardPerTokenPaid[account])) / 1e18) +
+            rewards[account];
+    }
+    
+    // Core Function 1: Stake tokens
+    function stake(uint256 _amount) external updateReward(msg.sender) {
+        require(_amount > 0, "Cannot stake 0");
+        _totalSupply += _amount;
+        balances[msg.sender] += _amount;
+        stakingToken.transferFrom(msg.sender, address(this), _amount);
+        emit Staked(msg.sender, _amount);
+    }
+    
+    // Core Function 2: Withdraw staked tokens
+    function withdraw(uint256 _amount) public updateReward(msg.sender) {
+        require(_amount > 0, "Cannot withdraw 0");
+        require(balances[msg.sender] >= _amount, "Insufficient balance");
+        _totalSupply -= _amount;
+        balances[msg.sender] -= _amount;
+        stakingToken.transfer(msg.sender, _amount);
+        emit Withdrawn(msg.sender, _amount);
+    }
+    
+    // Core Function 3: Claim rewards
+    function getReward() public updateReward(msg.sender) {
+        uint256 reward = rewards[msg.sender];
+        if (reward > 0) {
+            rewards[msg.sender] = 0;
+            rewardToken.transfer(msg.sender, reward);
+            emit RewardPaid(msg.sender, reward);
+        }
+    }
+    
+    // Utility function to exit completely (withdraw all and claim rewards)
+    function exit() external {
+        withdraw(balances[msg.sender]);
+        getReward();
+    }
+    
+    // Owner functions
+    function setRewardRate(uint256 _rewardRate) external onlyOwner {
+        rewardRate = _rewardRate;
+    }
+    
+    function depositRewards(uint256 _amount) external onlyOwner {
+        rewardToken.transferFrom(msg.sender, address(this), _amount);
+    }
+    
+    // View functions
+    function totalSupply() external view returns (uint256) {
+        return _totalSupply;
+    }
+    
+    function balanceOf(address account) external view returns (uint256) {
+        return balances[account];
+    }
+    
+    function getStakingToken() external view returns (address) {
+        return address(stakingToken);
+    }
+    
+    function getRewardToken() external view returns (address) {
+        return address(rewardToken);
+    }
+}
